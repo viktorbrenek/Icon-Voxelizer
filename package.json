@@ -1,0 +1,17 @@
+{
+  "name": "svg-voxelizer-app",
+  "version": "1.0.0",
+  "description": "Batch process SVG icons into a voxel style.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "echo 'Build command not configured. Use a tool like electron-builder.'"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^25.0.0"
+  },
+  "dependencies": {}
+}
