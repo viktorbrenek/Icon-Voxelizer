@@ -1,18 +1,33 @@
-const { contextBridge, ipcRenderer } = require('electron');
-const fs = require('fs');
+// preload.js (nahraď tímto)
+(() => {
+  try {
+    const { contextBridge, ipcRenderer } = require('electron');
+    const fs = require('fs');
 
-console.log('[PRELOAD] start');
+    const api = {
+      // Původní funkce
+      selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
+      saveFiles: (data) => ipcRenderer.invoke('files:save', data),
 
-try {
-  contextBridge.exposeInMainWorld('electronAPI', {
-    selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
-    saveFiles: (data) => ipcRenderer.invoke('files:save', data),
-    readFile: (filePath) => fs.readFileSync(filePath, 'utf-8'),
-  });
-  console.log('[PRELOAD] electronAPI exposed');
-} catch (e) {
-  console.error('[PRELOAD] failed to expose API:', e);
-  // nouzový signál do rendereru, když se preload rozbije
-  // (contextBridge už spadnul? pak aspoň dáme něco na window)
-  try { window.__preloadError = String(e && e.message || e); } catch (_) {}
-}
+      // Bezpečnější čtení (ať případný pád neodstřelí celý preload)
+      readFile: (filePath) => {
+        try {
+          return fs.readFileSync(filePath, 'utf-8');
+        } catch (e) {
+          console.error('readFile error:', e);
+          return null;
+        }
+      },
+
+      // Nové funkce pro presety
+      savePreset: (settings) => ipcRenderer.invoke('dialog:savePreset', settings),
+      loadPreset: () => ipcRenderer.invoke('dialog:openPreset'),
+    };
+
+    contextBridge.exposeInMainWorld('electronAPI', api);
+  } catch (e) {
+    // Propíchneme chybu do rendereru, aby se ukázala v alertu/index.html
+    globalThis.__preloadError = e && (e.stack || String(e));
+    try { console.error('Chyba v preload.js:', e); } catch {}
+  }
+})();

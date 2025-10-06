@@ -1,5 +1,3 @@
-// main.js
-
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -10,14 +8,14 @@ function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.js');
   console.log('[MAIN] preload path:', preloadPath, 'exists:', fs.existsSync(preloadPath));
 
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // přidej explicitně, ať to není v sandboxu
+      sandbox: false,              // 👈 DŮLEŽITÉ: mimo sandbox, ať má preload Node API (require, fs)
     },
   });
 
@@ -26,49 +24,20 @@ function createWindow() {
 }
 
 
-// ⬇⬇⬇ VYMĚŇ TENTO BLOK ZA SVŮJ HANDLER ⬇⬇⬇
-ipcMain.handle('dialog:openDirectory', async (event) => {
-  try {
-    // 1) Zkusíme získat okno více způsoby (někdy fromWebContents vrací null)
-    const winFromEvent = BrowserWindow.fromWebContents(event?.sender || null) || null;
-    const focusedWin = BrowserWindow.getFocusedWindow() || null;
-    const parent = winFromEvent || focusedWin || mainWindow || undefined;
-
-    console.log('[openDirectory] invoked. parent:',
-      parent ? 'OK' : 'undefined/null');
-
-    // 2) Otevřeme dialog (s pár bezpečnými properties)
-    const { canceled, filePaths } = await dialog.showOpenDialog(parent, {
-      title: 'Vyber složku se SVG',
-      properties: ['openDirectory', 'dontAddToRecent'],
-    });
-
-    console.log('[openDirectory] result:', { canceled, filePaths });
-
-    if (canceled || !filePaths || filePaths.length === 0) {
-      return null;
-    }
-
-    const folderPath = filePaths[0];
-    let files = [];
-    try {
-      // jen *.svg
-      files = fs.readdirSync(folderPath).filter(f => f.toLowerCase().endsWith('.svg'));
-    } catch (e) {
-      console.error('[openDirectory] readdirSync error:', e);
-      // když čtení selže, vrať aspoň cestu ke složce – renderer si může poradit
-      return { folderPath, files: [] };
-    }
-
-    return { folderPath, files };
-  } catch (err) {
-    console.error('[openDirectory] fatal error:', err);
-    // vraťme explicitní chybu do rendereru, ať to „nezmizí“
-    return { error: String(err && err.message || err) };
+// Handler pro výběr složky - TVOJE PŮVODNÍ, FUNKČNÍ VERZE
+ipcMain.handle('dialog:openDirectory', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  if (canceled || !filePaths || filePaths.length === 0) {
+    return null;
   }
+  const folderPath = filePaths[0];
+  const files = fs.readdirSync(folderPath).filter(file => file.toLowerCase().endsWith('.svg'));
+  return { folderPath, files };
 });
-// ⬆⬆⬆ KONEC PATCH BLOKU ⬆⬆⬆
 
+// Handler pro uložení zpracovaných SVG souborů
 ipcMain.handle('files:save', async (event, { outputFolder, filesToSave }) => {
   if (!fs.existsSync(outputFolder)) {
     fs.mkdirSync(outputFolder, { recursive: true });
@@ -80,19 +49,55 @@ ipcMain.handle('files:save', async (event, { outputFolder, filesToSave }) => {
       fs.writeFileSync(outputPath, file.content);
       savedCount++;
     } catch (error) {
-      console.error(`Failed to save file: ${file.name}`, error);
+      console.error(`Chyba při ukládání souboru: ${file.name}`, error);
     }
   }
   return savedCount;
 });
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => {
+// NOVĚ PŘIDANÝ Handler pro uložení presetu
+ipcMain.handle('dialog:savePreset', async (event, settings) => {
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+        title: 'Uložit preset nastavení',
+        defaultPath: 'voxel-preset.json',
+        filters: [{ name: 'JSON Files', extensions: ['json'] }]
+    });
+
+    if (canceled || !filePath) return { success: false };
+
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+        return { success: true, path: filePath };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// NOVĚ PŘIDANÝ Handler pro načtení presetu
+ipcMain.handle('dialog:openPreset', async (event) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+        title: 'Načíst preset nastavení',
+        filters: [{ name: 'JSON Files', extensions: ['json'] }],
+        properties: ['openFile']
+    });
+
+    if (canceled || !filePaths || filePaths.length === 0) return null;
+
+    try {
+        const content = fs.readFileSync(filePaths[0], 'utf-8');
+        return JSON.parse(content);
+    } catch (error) {
+        return { error: error.message };
+    }
+});
+
+app.whenReady().then(createWindow);
+
+app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
